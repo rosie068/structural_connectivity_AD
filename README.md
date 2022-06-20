@@ -1,6 +1,6 @@
 # structural_connectivity_AD
 
-This is the repository where I will saving my work on studying correlations between brain structural volumes over time in patients with mild Alzheimer's vs. severe.
+Repository for studying correlations between brain structural volumes over time in patients with mild Alzheimer's vs. severe.
 
 dataset: contains the sample dataset that the paper is based on, taken from ADNI 1 dataset UCSF Longitudinal study
 
