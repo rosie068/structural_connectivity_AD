@@ -1,4 +1,5 @@
 # structural_connectivity_AD
+# documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/)
 
 Repository for studying correlations between brain structural volumes over time in patients with mild Alzheimer's vs. severe.
 
