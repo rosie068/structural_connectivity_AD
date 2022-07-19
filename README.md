@@ -1,5 +1,4 @@
 # structural_connectivity_AD
-# documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/)
 
 Repository for studying correlations between brain structural volumes over time in patients with mild Alzheimer's vs. severe.
 
@@ -12,3 +11,5 @@ pipeline_functions: joint graph embedding algorithm and f-type statistics analys
 joint_graph_embedding_analysis: notebook on running the algorithm and analysis
 
 requirements.txt: requirement packages and versions
+
+documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/)
