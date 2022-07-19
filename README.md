@@ -11,3 +11,5 @@ pipeline_functions: joint graph embedding algorithm and f-type statistics analys
 joint_graph_embedding_analysis: notebook on running the algorithm and analysis
 
 requirements.txt: requirement packages and versions
+
+documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/)
