@@ -4,7 +4,8 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 
-def read_data(CDR_file, adj_path):
+
+def read_CDR(CDR_file, adj_path):
     diag = pd.read_csv(CDR_file).set_index('RID')
     diag = diag.astype(float)
 
@@ -64,6 +65,7 @@ def read_data(CDR_file, adj_path):
     
     return As, N, M, normal_group, AD_group, combined_group
 
+
 def joint_graph_embedding(el, e, d, As, N, M):
     ## Setup
     l = torch.randn(N,d,requires_grad=True)
@@ -91,8 +93,8 @@ def joint_graph_embedding(el, e, d, As, N, M):
 
         l.requires_grad = True
 
-    leye = torch.zeros(N,1,dtype=h.dtype,requires_grad=True)
-    eye = torch.eye(M,dtype=h.dtype)
+    #leye = torch.zeros(N,1,dtype=h.dtype,requires_grad=True)
+    #eye = torch.eye(M,dtype=h.dtype)
 
     ## Estimation
     f,ax = plt.subplots()
@@ -105,8 +107,14 @@ def joint_graph_embedding(el, e, d, As, N, M):
             hd = h[:,:d_+1]
             ld = l[:,:d_+1]                        
 
-            Ahat0 = (ld[:,None,:]*hd)@hd.T + eye*leye[:,None,:]
-            Ahat = torch.sigmoid(Ahat0)    
+            Ahat0 = (ld[:,None,:]*hd)@hd.T # + eye*leye[:,None,:]
+            Ahat = torch.sigmoid(Ahat0)
+                        
+            ### applying a mask to make estimated At diagonal 0, then it won't be taken into account
+            mask = torch.ones([As.shape[1], As.shape[1]])
+            mask.fill_diagonal_(0)
+            Ahat0 = torch.mul(Ahat0, mask)
+            
             E = torch.nn.functional.binary_cross_entropy_with_logits(Ahat0,At,
                                                                      reduction='mean')
             Esave.append(E.item())        
@@ -147,11 +155,11 @@ def joint_graph_embedding(el, e, d, As, N, M):
                 h /= torch.sqrt(torch.sum(h**2,0,keepdims=True))
 
                 l -= el*l.grad            
-                leye -= el*leye.grad
+                #leye -= el*leye.grad
 
                 h.grad.zero_()
                 l.grad.zero_()
-                leye.grad.zero_()
+                #leye.grad.zero_()
         print(Esave[-1])
         print(ld)
 
@@ -162,6 +170,8 @@ def joint_graph_embedding(el, e, d, As, N, M):
     np.savetxt('h.csv', h, delimiter=',')
     
     return l, h
+
+
 
 def construct_tensor(l,h):
     num_pat = np.shape(l)[0]
@@ -179,7 +189,8 @@ def construct_tensor(l,h):
     
     return tensor_all
 
-def find_ratio_by_dim(tensor_all, normal, combined_group, normal_group, AD_group, num_dim, num_struct):
+
+def find_ratio_by_dim(normal):
     ratio_by_dim = np.zeros(num_dim)
     
     for i in range(num_dim):
@@ -214,15 +225,17 @@ def find_ratio_by_dim(tensor_all, normal, combined_group, normal_group, AD_group
     max_ratio = np.max(ratio_by_dim)
     return max_ratio, ratio_by_dim
 
-def testing_for_networks(tensor_all, combined_group, normal_group, AD_group, num_dim, num_struct):
-    real_max_byDim, ratio_byDim = find_ratio_by_dim(tensor_all, normal_group, combined_group, normal_group, AD_group, num_dim, num_struct)
+
+
+def testing_for_networks():
+    real_max_byDim, ratio_byDim = find_ratio_by_dim(normal_group)
 
     max_byDim_arr = np.zeros(10000)
-    temp_arr = np.zeros(num_dim)
+    temp_arr = np.zeros(4)
     for i in range(10000):
         simulated_normal = np.random.choice(combined_group, len(normal_group), 
                                             replace=False)
-        max_byDim_arr[i], temp_arr = find_ratio_by_dim(tensor_all, simulated_normal, combined_group, normal_group, AD_group, num_dim, num_struct)
+        max_byDim_arr[i], temp_arr = find_ratio_by_dim(simulated_normal)
 
         if i%1000 == 0:
             print(str(i) + " done")
@@ -236,7 +249,9 @@ def testing_for_networks(tensor_all, combined_group, normal_group, AD_group, num
         if ratio_byDim[r] > byDim_cutoff_threshold:
             print("we reject the null for dimention " + str(r))
 
-def find_ratio_tuple_triple(tensor_all, normal, combined_group, normal_group, AD_group, num_dim, num_struct):
+
+
+def find_ratio_tuple_triple(normal):
     ratio_by_tuple = np.zeros((num_dim, num_struct))
     ratio_by_triple = np.zeros((num_dim, num_struct, num_struct))
     
@@ -288,9 +303,13 @@ def find_ratio_tuple_triple(tensor_all, normal, combined_group, normal_group, AD
     max_ratio_triple = np.max(ratio_by_triple)
     return max_ratio_tuple, max_ratio_triple, ratio_by_tuple, ratio_by_triple
 
+
+
 ##global FWER corrected p value
-def testing_for_tuples(tensor_all, combined_group, normal_group, AD_group, num_dim, num_struct):
-    real_max_tup, real_max_tri, real_ratio_tup, real_ratio_tri = find_ratio_tuple_triple(tensor_all, normal_group, combined_group, normal_group, AD_group, num_dim, num_struct)
+def testing_for_tuples():
+    num_dim = 4
+    num_struct = 108
+    real_max_tup, real_max_tri, real_ratio_tup, real_ratio_tri = find_ratio_tuple_triple(normal_group)
 
     max_byTuple_arr = np.zeros(10000)
     max_byTriple_arr = np.zeros(10000)
@@ -299,7 +318,7 @@ def testing_for_tuples(tensor_all, combined_group, normal_group, AD_group, num_d
     temp_arr_tri = np.zeros((num_dim, num_struct, num_struct))
     for i in range(10000):
         simulated_normal = np.random.choice(combined_group, len(normal_group), replace=False)
-        max_byTuple_arr[i],max_byTriple_arr[i],temp_arr_tup,temp_arr_tri = find_ratio_tuple_triple(tensor_all, simulated_normal, combined_group, normal_group, AD_group, num_dim, num_struct)
+        max_byTuple_arr[i],max_byTriple_arr[i],temp_arr_tup,temp_arr_tri = find_ratio_tuple_triple(simulated_normal)
 
         if i%1000 == 0:
             print(str(i) + " done")
