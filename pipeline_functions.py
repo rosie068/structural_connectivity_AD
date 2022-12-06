@@ -5,7 +5,7 @@ import os
 import matplotlib.pyplot as plt
 
 
-def read_CDR(CDR_file, adj_path):
+def read_data(CDR_file, adj_path):
     diag = pd.read_csv(CDR_file).set_index('RID')
     diag = diag.astype(float)
 
@@ -351,7 +351,7 @@ def testing_for_tuples():
     rej_count_tri = 0
     for i in range(num_dim):
         for k in range(num_struct):
-            for m in range(k, num_struct):
+            for m in range(k+1, num_struct):
                 p_val = (real_ratio_tri[i,k,m] < max_byTriple_arr).sum() / 10000.0
                 if p_val < 0.05:
                     triple_ranked_by_pval.loc[len(triple_ranked_by_pval.index)] = [i,k,m,p_val]
