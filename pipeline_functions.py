@@ -4,8 +4,7 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 
-
-def read_CDR(CDR_file, adj_path):
+def read_data(CDR_file, adj_path):
     diag = pd.read_csv(CDR_file).set_index('RID')
     diag = diag.astype(float)
 
@@ -190,7 +189,7 @@ def construct_tensor(l,h):
     return tensor_all
 
 
-def find_ratio_by_dim(normal):
+def find_ratio_by_dim(normal,tensor_all,num_dim,num_struct):
     ratio_by_dim = np.zeros(num_dim)
     
     for i in range(num_dim):
@@ -227,15 +226,14 @@ def find_ratio_by_dim(normal):
 
 
 
-def testing_for_networks():
-    real_max_byDim, ratio_byDim = find_ratio_by_dim(normal_group)
+def testing_for_networks(tensor_all, combined_group, normal_group, AD_group, num_dim,num_struct):
+    real_max_byDim, ratio_byDim = find_ratio_by_dim(normal_group,tensor_all,num_dim,num_struct)
 
     max_byDim_arr = np.zeros(10000)
     temp_arr = np.zeros(4)
     for i in range(10000):
-        simulated_normal = np.random.choice(combined_group, len(normal_group), 
-                                            replace=False)
-        max_byDim_arr[i], temp_arr = find_ratio_by_dim(simulated_normal)
+        simulated_normal = np.random.choice(combined_group, len(normal_group), replace=False)
+        max_byDim_arr[i], temp_arr = find_ratio_by_dim(simulated_normal,tensor_all,num_dim,num_struct)
 
         if i%1000 == 0:
             print(str(i) + " done")
@@ -251,7 +249,7 @@ def testing_for_networks():
 
 
 
-def find_ratio_tuple_triple(normal):
+def find_ratio_tuple_triple(normal,tensor_all,num_dim, num_struct):
     ratio_by_tuple = np.zeros((num_dim, num_struct))
     ratio_by_triple = np.zeros((num_dim, num_struct, num_struct))
     
@@ -306,10 +304,10 @@ def find_ratio_tuple_triple(normal):
 
 
 ##global FWER corrected p value
-def testing_for_tuples():
+def testing_for_tuples(tensor_all, combined_group, normal_group, AD_group, num_dim, num_struct):
     num_dim = 4
     num_struct = 108
-    real_max_tup, real_max_tri, real_ratio_tup, real_ratio_tri = find_ratio_tuple_triple(normal_group)
+    real_max_tup, real_max_tri, real_ratio_tup, real_ratio_tri = find_ratio_tuple_triple(normal_group, tensor_all,num_dim, num_struct)
 
     max_byTuple_arr = np.zeros(10000)
     max_byTriple_arr = np.zeros(10000)
@@ -318,7 +316,7 @@ def testing_for_tuples():
     temp_arr_tri = np.zeros((num_dim, num_struct, num_struct))
     for i in range(10000):
         simulated_normal = np.random.choice(combined_group, len(normal_group), replace=False)
-        max_byTuple_arr[i],max_byTriple_arr[i],temp_arr_tup,temp_arr_tri = find_ratio_tuple_triple(simulated_normal)
+        max_byTuple_arr[i],max_byTriple_arr[i],temp_arr_tup,temp_arr_tri = find_ratio_tuple_triple(simulated_normal,tensor_all,num_dim,num_struct)
 
         if i%1000 == 0:
             print(str(i) + " done")
@@ -351,7 +349,7 @@ def testing_for_tuples():
     rej_count_tri = 0
     for i in range(num_dim):
         for k in range(num_struct):
-            for m in range(k, num_struct):
+            for m in range(k+1, num_struct):
                 p_val = (real_ratio_tri[i,k,m] < max_byTriple_arr).sum() / 10000.0
                 if p_val < 0.05:
                     triple_ranked_by_pval.loc[len(triple_ranked_by_pval.index)] = [i,k,m,p_val]
@@ -359,6 +357,231 @@ def testing_for_tuples():
                           " structure " + str(k) +
                           " and structure " + str(m) +
                           " with ratio " + str(real_ratio_tri[i,k,m]))
+                    rej_count_tri+=1
+    print("A total of " + str(rej_count_tri) + " network-structure-structure triplets rejected.")
+    triple_ranked_by_pval.sort_values(by=['p_value'], inplace=True)
+    triple_ranked_by_pval.to_csv("triple_ranked_bypval.csv")
+
+    
+
+def get_confounder_data(sex_age_file, icv_dir):
+    summary = pd.read_csv(sex_age_file)
+    summary = summary.iloc[:,1:]
+    summary = summary.loc[summary['RID'].isin(combined_group)]
+    summary['subjectSex'] = summary['subjectSex'].replace({"M": 0, "F": 1}) ### male 0, female 1
+
+    ### two column: indicator for 1 APOE4 and for 2 APOE4s
+    summary['two_APOE'] = np.where((summary['subjectInfo: APOE A1'] == summary['subjectInfo: APOE A2']) & 
+(summary['subjectInfo: APOE A1'] == 4), 1, 0)
+    summary['one_APOE'] = np.where(((summary['subjectInfo: APOE A1'] == 4) | (summary['subjectInfo: APOE A2'] == 4)) & (summary['subjectInfo: APOE A1'] != summary['subjectInfo: APOE A2']), 1, 0)
+    summary.set_index('RID', inplace=True)
+    
+    icv_dir = os.listdir(icv_dir)
+    for p in icv_dir:
+        pid = float(p.split('.')[0].split('_')[1])
+        file = pd.read_csv(icv_dir+'/'+p)
+        summary.loc[pid, 'ICV'] = file.iloc[0,2]
+    summary.dropna(how='any', inplace=True)
+
+    summary['ICV'] = (summary['ICV']-summary['ICV'].mean())/summary['ICV'].std()
+    return summary
+
+
+def calc_SSE_diff_confounder(summary, AD_g, l):
+    ### D0, with no grouping
+    D_df = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+
+    D = D_df.values
+    Dt = D.transpose()
+    A = linalg.solve(np.matmul(Dt,D), np.matmul(Dt, l))
+    
+    estimated_l = np.matmul(D, A)
+    SSE = np.square(l-estimated_l).sum(axis=0)
+
+    ### D1, with extra column indicting label
+    D_df_group = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df_group['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+    D_df_group['AD'] = 0
+    D_df_group.loc[D_df_group.index.isin(AD_g), 'AD'] = 1
+
+    D_group = D_df_group.values
+    Dt_group = D_group.transpose()
+    A_group = linalg.solve(np.matmul(Dt_group,D_group), np.matmul(Dt_group, l))
+
+    estimated_l_group = np.matmul(D_group, A_group)
+    SSE_group = np.square(l-estimated_l_group).sum(axis=0)
+
+    ### find difference
+    SSE_diff = SSE-SSE_group
+    return SSE_diff
+
+def testing_for_networks_confounder(summary, combined_group, AD_group, l):
+    real_SSE_diff = calc_SSE_diff_confounder(summary, AD_group, l)
+    print(real_SSE_diff)
+    
+    max_SSE_diff_arr = np.zeros(10000)
+    temp_arr = np.zeros(4)
+    for i in range(10000):
+        simulated_AD = np.random.choice(combined_group, len(AD_group), replace=False)
+        temp_arr = calc_SSE_diff_confounder(summary, simulated_AD, l)
+        max_SSE_diff_arr[i] = np.max(temp_arr)
+        
+        if i%1000 == 0:
+            print(str(i) + " done")
+    byDim_cutoff_threshold = np.percentile(max_SSE_diff_arr, 95)
+    
+    np.savetxt('hhl_simulated_max_byGroup_byNetwork.csv', max_SSE_diff_arr, delimiter=',')
+    p_val = (max_SSE_diff_arr > np.max(real_SSE_diff)).sum()
+    print("p value is " + str(p_val))
+
+    for r in range(len(real_SSE_diff)):
+        if real_SSE_diff[r] > byDim_cutoff_threshold:
+            print("we reject the null for dimention " + str(r))
+
+            
+def calc_SSE_diff_tuple_confounder(summary, AD_g, tensor_tuple):
+    ### D0, with no grouping
+    D_df = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+    D = D_df.values
+    Dt = D.transpose()
+    
+    ### D1, with extra column indicting label
+    D_df_group = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df_group['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+    D_df_group['AD'] = 0
+    D_df_group.loc[D_df_group.index.isin(AD_g), 'AD'] = 1
+
+    D_group = D_df_group.values
+    Dt_group = D_group.transpose()
+    
+    ratio_by_tuple = np.zeros((num_dim, num_struct))
+    
+    for i in range(num_dim):
+        lh = tensor_tuple[:,i,:]
+        
+        A = linalg.solve(np.matmul(Dt,D), np.matmul(Dt, lh))
+
+        estimated_lh = np.matmul(D, A)
+        SSE = np.square(lh-estimated_lh).sum(axis=0)
+
+        A_group = linalg.solve(np.matmul(Dt_group,D_group), np.matmul(Dt_group, lh))
+
+        estimated_lh_group = np.matmul(D_group, A_group)
+        SSE_group = np.square(lh-estimated_lh_group).sum(axis=0)
+
+        ### find difference
+        ratio_by_tuple[i,:] = SSE-SSE_group
+    return ratio_by_tuple
+
+def testing_for_tuples_confounder(summary, combined_group, AD_group, tensor_tuple):
+    real_SSE_diff = calc_SSE_diff_tuple_confounder(summary, AD_group, tensor_tuple)
+    print(real_SSE_diff.shape)
+    
+    max_SSE_diff_arr = np.zeros(10000)
+    temp_arr = np.zeros((4,108))
+    for i in range(10000):
+        simulated_AD = np.random.choice(combined_group, len(AD_group), replace=False)
+        temp_arr = calc_SSE_diff_tuple_confounder(summary, simulated_AD, tensor_tuple)
+        max_SSE_diff_arr[i] = np.max(temp_arr)
+        
+        if i%1000 == 0:
+            print(str(i) + " done")
+    byTuple_cutoff_threshold = np.percentile(max_SSE_diff_arr, 95)
+    
+    np.savetxt('hhl_simulated_max_byGroup_byTuple.csv', max_SSE_diff_arr, delimiter=',')
+    
+    print("******************")
+    ##global FWER corrected p value
+    tuple_ranked_by_pval = pd.DataFrame(columns=['dimension','structure','p_value'])
+
+    ##local FWER corrected p value
+    rej_count = 0
+    for i in range(num_dim):
+        for k in range(num_struct):
+            p_val = (real_SSE_diff[i,k] < max_SSE_diff_arr).sum() / 10000.0
+            if p_val < 0.05:
+                tuple_ranked_by_pval.loc[len(tuple_ranked_by_pval.index)] = [i,k,p_val]
+                print("we reject the null for dimension " + str(i) + " structure " + str(k))
+                rej_count+=1
+    print("A total of " + str(rej_count) + " network-structure pairs rejected.")
+    
+    tuple_ranked_by_pval.sort_values(by=['p_value'], inplace=True)
+    tuple_ranked_by_pval.to_csv("tuple_ranked_bypval.csv")
+    
+    
+def calc_SSE_diff_triple_confounder(summary, AD_g, tensor_all):
+    num_dim = 4
+    num_struct = 108
+    
+    ### D0, with no grouping
+    D_df = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+    D = D_df.values
+    Dt = D.transpose()
+    
+    ### D1, with extra column indicting label
+    D_df_group = summary[['subjectIdentifier','subjectAge','one_APOE','two_APOE','ICV']]
+    D_df_group['subjectIdentifier'] = 1 ## just to get the column of 1s for mean
+    D_df_group['AD'] = 0
+    D_df_group.loc[D_df_group.index.isin(AD_g), 'AD'] = 1
+    D_group = D_df_group.values
+    Dt_group = D_group.transpose()
+    
+    ratio_by_triple = np.zeros((num_dim, num_struct, num_struct))
+    
+    for i in range(num_dim):
+        for j in range(num_struct):
+            ### the new l is l*h*h for each dimension, which is 494*108
+            lhh = tensor_all[:,i,j,:].reshape((494,108))
+            
+            ### no grouping
+            A = linalg.solve(np.matmul(Dt,D), np.matmul(Dt, lhh))
+
+            estimated_lhh = np.matmul(D, A)
+            SSE = np.square(lhh-estimated_lhh).sum(axis=0)
+
+            ### with grouping
+            A_group = linalg.solve(np.matmul(Dt_group,D_group), np.matmul(Dt_group, lhh))
+
+            estimated_lhh_group = np.matmul(D_group, A_group)
+            SSE_group = np.square(lhh-estimated_lhh_group).sum(axis=0)
+
+            ### find difference
+            ratio_by_triple[i,j,:] = SSE-SSE_group
+    return ratio_by_triple
+
+def testing_for_triples_confounder(summary, combined_group, AD_group, tensor_all):
+    real_SSE_diff = calc_SSE_diff_triple_confounder(summary, AD_group, tensor_all)
+    print(real_SSE_diff.shape)
+    
+    max_SSE_diff_arr = np.zeros(10000)
+    temp_arr = np.zeros((4,108,108))
+    for i in range(10000):
+        simulated_AD = np.random.choice(combined_group, len(AD_group), replace=False)
+        temp_arr = calc_SSE_diff_triple_confounder(summary, simulated_AD, tensor_all)
+        max_SSE_diff_arr[i] = np.max(temp_arr)
+        
+        if i%1000 == 0:
+            print(str(i) + " done")
+    byTriple_cutoff_threshold = np.percentile(max_SSE_diff_arr, 95)
+    
+    np.savetxt('simulated_max_byGroup_byTriple.csv', max_SSE_diff_arr, delimiter=',')
+    
+    print("******************")
+    triple_ranked_by_pval = pd.DataFrame(columns=['dimension','structure','structure_2','p_value'])
+
+    rej_count_tri = 0
+    for i in range(num_dim):
+        for k in range(num_struct):
+            for m in range(k+1, num_struct):
+                p_val = (real_SSE_diff[i,k,m] < max_SSE_diff_arr).sum() / 10000.0
+                if p_val < 0.05:
+                    triple_ranked_by_pval.loc[len(triple_ranked_by_pval.index)] = [i,k,m,p_val]
+                    print("we reject the null for dimension " + str(i) +
+                          " structure " + str(k) +
+                          " and structure " + str(m))
                     rej_count_tri+=1
     print("A total of " + str(rej_count_tri) + " network-structure-structure triplets rejected.")
     triple_ranked_by_pval.sort_values(by=['p_value'], inplace=True)
