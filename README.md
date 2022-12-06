@@ -14,5 +14,5 @@ requirements.txt: requirement packages and versions
 
 For running on the example dataset, first run preprocess notebook, then run joint_graph_embedding_analysis.
 
-documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/)
+documentation generated with sphinx software (https://www.sphinx-doc.org/en/master/), code documentation can be found in docs/build/html/index.html
 
